@@ -1,4 +1,4 @@
-﻿"""Read-only review of the exact source tree intended for GitHub publication."""
+"""Read-only review of the exact source tree intended for GitHub publication."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -16,7 +16,7 @@ root_files = {
     "LICENSE_POLICY.md", "LICENSE_CANDIDATE.md", "LICENSE",
     "THIRD_PARTY_NOTICES.md", "requirements.txt", "requirements-build.txt",
     "modules_catalog.json", "update_source.json", "run_build_tests.py",
-    "app.py", "core.py", "cache_manager.py", "catalog_adapter.py",
+    "app.py", "core.py", "community_storage.py", "cache_manager.py", "catalog_adapter.py",
     "directory_diagnostics.py", "discovery.py", "discovery_cache.py",
     "install_manager.py", "lifecycle.py", "log_storage.py",
     "module_preferences.py", "offline_library.py", "update_manager.py",
