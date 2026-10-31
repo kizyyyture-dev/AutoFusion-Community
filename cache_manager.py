@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import zipfile
+from community_storage import root_owned, linked
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,6 +77,8 @@ def clean_module_cache(root: Path, module: str) -> tuple[int, int]:
     plan = cache_plan(root, module)
     if plan.unsafe:
         raise ValueError('安装缓存不安全，未删除任何文件：' + plan.reason)
+    if plan.files and not root_owned(root):
+        raise ValueError("该目录没有 Community 创建的缓存归属记录，不清理来源未确认的安装缓存")
     removed, bytes_deleted = 0, 0
     for path in plan.files:
         # Re-check just before removal. Never follow a newly swapped link.

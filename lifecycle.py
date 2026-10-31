@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
-from install_manager import CHUNK, MARKER
+from install_manager import CHUNK, MARKER, discover_sra_executable
+from community_storage import trusted_install, linked
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ def _inside_without_links(base: Path, target: Path) -> bool:
         return False
     current = target
     while current != base:
-        if current.is_symlink():
+        if linked(current):
             return False
         if current.parent == current:
             return False
@@ -79,16 +80,21 @@ def _inside_without_links(base: Path, target: Path) -> bool:
     return not base.is_symlink()
 
 
-def inspect_sra(root: Path) -> PortablePlan:
+def inspect_sra(root: Path, selected=None, discover_external=False) -> PortablePlan:
     """Read-only plan for an already installed V0.2.2 SRA ZIP.
 
     Does not follow symlinks or classify untracked user files as deletable.
     """
     folder = root / 'sra'
     if not folder.exists() and not folder.is_symlink():
-        return PortablePlan('absent', folder, message='未发现由 AutoFusion 管理的 SRA 目录。')
-    if not folder.is_dir() or folder.is_symlink():
+        external=discover_sra_executable(root,selected) if discover_external or selected else None
+        if external:
+            return PortablePlan('unmanaged',external.parent,message='已发现外部便携程序；没有 Community 安装记录，只读识别，可选择原版入口，不会自动删除。')
+        return PortablePlan('absent', folder, message='未发现 SRA 安装。')
+    if not folder.is_dir() or linked(folder):
         return PortablePlan('unsafe', folder, message='SRA 目录不是普通文件夹，拒绝自动卸载。')
+    if not trusted_install(folder):
+        return PortablePlan('unmanaged',folder,message='已发现安装目录，但没有本机 Community 的可信安装记录；不覆盖、不执行受管卸载。')
     marker = folder / MARKER
     if marker.is_symlink() or not marker.is_file():
         return PortablePlan('unmanaged', folder, message='找不到可信的 AutoFusion 安装清单，不会自动删除。')
@@ -134,7 +140,7 @@ def inspect_sra(root: Path) -> PortablePlan:
     user_count = 0
     try:
         for directory, dirs, files in os.walk(folder, topdown=True, followlinks=False):
-            dirs[:] = [d for d in dirs if not (Path(directory) / d).is_symlink()]
+            dirs[:] = [d for d in dirs if not linked(Path(directory) / d)]
             for filename in files:
                 p = Path(directory) / filename
                 if p == marker:

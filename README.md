@@ -11,7 +11,7 @@ Python 3.13（含 Tkinter），运行时无额外 pip 依赖：
     python app.py
     python run_build_tests.py
 
-Community 配置使用独立的 AutoFusionCommunity 用户目录，模块默认放在其 Modules 子目录；离线库位于同级 OfflinePackages。不会自动迁移或读取 Personal 配置。测试只使用本项目 .test-tmp 内的隔离用户目录。
+Community 配置使用独立的 AutoFusionCommunity 用户目录。模块目录优先为 D:\AutoFusion\fusion，离线库位于同级 OfflinePackages；若 D 盘不存在、权限预检失败或目录冲突，选择可用备用目录。已有明确保存的目录设置保持有效，不自动迁移用户文件，也不读取其他版本的私人配置。测试只使用本项目 .test-tmp 内的隔离用户目录。
 
 ## Windows 构建
 
@@ -41,3 +41,11 @@ Community 配置使用独立的 AutoFusionCommunity 用户目录，模块默认�
     python scripts/release_preflight.py --require-license
 
 第一条只读检查源码文件白名单和敏感内容；第二条额外要求正式 LICENSE，当前 LICENSE 已就位，两条均应通过。源码发布与二进制发行分开：本次只发布源码，未构建 EXE，不得声称已经完成 Community EXE 验收。
+
+## 软件发现与管理权限
+
+软件发现不限制在整合目录：官方安装版通过 Windows 安装登记和已知路径识别，便携版支持明确选择的可执行文件、安装清单和有限的已知位置，不扫描全盘。
+
+Community 自己部署的便携模块会在独立配置目录自动记录安装路径和清单摘要，重启后仍可识别为已部署。仅有 EXE、目录或旧清单的外部安装为只读发现，不自动取得覆盖或卸载权限。官方安装器项目继续遵循原版安装与卸载规则。
+
+来源未确认的默认目录会回退到 D:\AutoFusion\Community\fusion 或用户目录下的独立位置；普通单版本用户无需了解其他产品版本。自动选址只做只读权限预检，实际写入失败时需在设置重选可写目录。

@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from community_storage import linked, root_owned, claim_empty_root, record_install, trusted_install, forget_install
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
@@ -42,9 +43,33 @@ class Asset:
     release_url: str
 
 
-def default_root() -> Path:
+def _usable_default(path):
+    """Read-only best effort: no probe files or directory creation at startup."""
+    try:
+        path=Path(path)
+        if linked(path): return False
+        if path.exists():
+            if not path.is_dir(): return False
+            if any(path.iterdir()) and not root_owned(path): return False
+        ancestor=path
+        while not ancestor.exists():
+            if ancestor.parent==ancestor: return False
+            ancestor=ancestor.parent
+        return ancestor.is_dir() and os.access(ancestor,os.W_OK|os.X_OK)
+    except OSError:
+        return False
+
+def default_root(candidates=None) -> Path:
     from core import data_dir
-    return data_dir() / "Modules"
+    if candidates is None:
+        candidates=[]
+        if sys.platform=="win32" and Path("D:/").is_dir():
+            candidates += [Path("D:/AutoFusion/fusion"),Path("D:/AutoFusion/Community/fusion")]
+        candidates += [data_dir()/"fusion",Path.home()/"AutoFusion"/"fusion"]
+    for candidate in candidates:
+        if _usable_default(candidate): return Path(candidate)
+    raise ValueError("未找到可写且无冲突的默认目录，请在设置中选择空的整合目录")
+
 
 
 def _allowed_host(url: str) -> bool:
@@ -178,7 +203,7 @@ def _relative_zip_path(info: zipfile.ZipInfo) -> Path:
 
 def extract_sra_safely(archive: Path, destination: Path, report: Progress = lambda _: None) -> list[dict]:
     """Install to a fresh folder; return installed files + hashes for safe uninstall."""
-    if destination.exists():
+    if destination.exists() or linked(destination):
         raise FileExistsError('目标模块目录已存在，不会覆盖原有安装或文件：' + str(destination))
     destination.parent.mkdir(parents=True, exist_ok=True)
     stage = destination.parent / ('.autofusion-staging-' + uuid.uuid4().hex)
@@ -227,9 +252,10 @@ def extract_sra_safely(archive: Path, destination: Path, report: Progress = lamb
             raise ValueError('完整 ZIP 内没有唯一的 SRA-cli.exe 与 SRA.exe；请检查上游发布结构')
         meta = {'module': 'sra', 'created': int(time.time()), 'files': inventory,
                 'cli': cli_candidates[0].relative_to(stage).as_posix(),
-                'gui': desktop_candidates[0].relative_to(stage).as_posix()}
+                'gui': desktop_candidates[0].relative_to(stage).as_posix(), 'edition': 'Community'}
         (stage / MARKER).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
         stage.rename(destination)
+        record_install(destination)
         report(f'SRA 已安装到：{destination}')
         return inventory
     finally:
@@ -252,7 +278,7 @@ def module_executable(root: Path, module: str) -> Path | None:
             return path
     except (OSError, TypeError, ValueError, KeyError):
         pass
-    return None
+    return discover_sra_executable(root, external=False)
 
 
 def sra_desktop_executable(root: Path) -> Path | None:
@@ -267,7 +293,9 @@ def sra_desktop_executable(root: Path) -> Path | None:
             return p
     except (OSError, ValueError, KeyError, TypeError):
         pass
-    return None
+    cli=discover_sra_executable(root, external=False)
+    gui=cli.parent/'SRA.exe' if cli else None
+    return gui if gui and gui.is_file() and not linked(gui) else None
 
 
 def uninstall_managed_sra(root: Path) -> tuple[int, int]:
@@ -275,6 +303,12 @@ def uninstall_managed_sra(root: Path) -> tuple[int, int]:
     Returns (removed_file_count, files_left_count). Never blindly rmtree a module.
     """
     folder = root / 'sra'
+    if not trusted_install(folder):
+        raise ValueError('此安装没有本机 Community 的可信安装记录，只读识别，不执行受管卸载')
+    from lifecycle import inspect_sra
+    plan=inspect_sra(root)
+    if plan.state!='managed' or plan.unsafe:
+        raise ValueError('安装清单校验失败，不执行卸载')
     if folder.is_symlink():
         raise ValueError('模块目录是链接，拒绝卸载')
     markerfile = folder / MARKER
@@ -308,12 +342,16 @@ def uninstall_managed_sra(root: Path) -> tuple[int, int]:
     # Keep marker if any recorded file remains, so user can retry later.
     if kept == 0:
         markerfile.unlink(missing_ok=True)
-    for parent, dirs, files in os.walk(folder, topdown=False, followlinks=False):
-        candidate = Path(parent)
-        if candidate.is_symlink():
+        forget_install(folder)
+    safe_directories = []
+    for parent, dirs, files in os.walk(folder, topdown=True, followlinks=False):
+        dirs[:] = [d for d in dirs if not linked(Path(parent) / d)]
+        safe_directories.append(Path(parent))
+    for candidate in reversed(safe_directories):
+        if linked(candidate):
             continue
         try:
-            candidate.rmdir()  # only remove empty directories
+            candidate.rmdir()  # only ordinary empty directories
         except OSError:
             pass
     return removed, kept
@@ -377,7 +415,7 @@ def download_official(module: str, root: Path, report: Progress = lambda _: None
     report('正在检查 GitHub 官方稳定版发布信息…')
     asset = latest_asset(module)
     report(f'已选择 {asset.version}：{asset.name}（约 {asset.size // 1024**2} MiB）')
-    root.mkdir(parents=True, exist_ok=True)
+    claim_empty_root(root)
     if module == 'sra' and (root / 'sra').exists():
         raise FileExistsError('SRA 目标目录已经存在，拒绝覆盖；请先检查当前安装。')
     cache = root / '_downloads' / module
@@ -390,3 +428,51 @@ def download_official(module: str, root: Path, report: Progress = lambda _: None
     if not exe:
         raise RuntimeError('SRA 安装完成但未能识别命令行程序')
     return ('portable', exe, asset, digest)
+
+def _sra_registry_candidates():
+    if sys.platform!="win32": return []
+    import winreg
+    found=[]
+    key=r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    for hive in (winreg.HKEY_CURRENT_USER,winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY,winreg.KEY_WOW64_32KEY):
+            try:
+                with winreg.OpenKey(hive,key,0,winreg.KEY_READ|view) as parent:
+                    for i in range(min(winreg.QueryInfoKey(parent)[0],5000)):
+                        try:
+                            with winreg.OpenKey(parent,winreg.EnumKey(parent,i)) as sub:
+                                name=str(winreg.QueryValueEx(sub,"DisplayName")[0])
+                                if not re.match(r"^StarRailAssistant(?:$|[ vV0-9])",name): continue
+                                location=str(winreg.QueryValueEx(sub,"InstallLocation")[0]).strip(' "')
+                                if location: found.append(Path(location))
+                        except OSError: continue
+            except OSError: continue
+    return found
+
+def discover_sra_executable(root=None, selected=None, external=True):
+    """Find a CLI using explicit selection, metadata or a bounded known location."""
+    if selected:
+        p=Path(selected)
+        if p.name.casefold()=="sra-cli.exe" and p.is_file() and not linked(p): return p
+    env=os.environ
+    bases=([Path(root)/"sra"] if root else [])+(_sra_registry_candidates() if external else [])
+    if external and sys.platform=="win32":
+        if Path("D:/").is_dir(): bases.append(Path("D:/AutoFusion/fusion/sra"))
+        local=Path(env.get("LOCALAPPDATA",str(Path.home())))
+        bases += [local/"AutoFusion"/"fusion"/"sra",local/"Programs"/"StarRailAssistant",
+                  Path(env.get("PROGRAMFILES","C:/Program Files"))/"StarRailAssistant"]
+    for base in bases:
+        if linked(base) or not base.is_dir(): continue
+        candidates=[base/"SRA-cli.exe"]
+        try:
+            marker=json.loads((base/MARKER).read_text(encoding="utf-8"))
+            rel=Path(str(marker.get("cli","")))
+            if not rel.is_absolute() and ".." not in rel.parts: candidates.insert(0,base/rel)
+        except (OSError,ValueError,TypeError,AttributeError): pass
+        try:
+            children=sorted(base.iterdir(),key=lambda p:p.name.casefold())[:64]
+            candidates += [p/"SRA-cli.exe" for p in children if p.is_dir() and not linked(p)]
+        except OSError: pass
+        for p in candidates:
+            if p.name.casefold()=="sra-cli.exe" and p.is_file() and not linked(p): return p
+    return None

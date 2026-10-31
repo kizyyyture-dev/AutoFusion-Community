@@ -21,7 +21,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from core import MODULE_INFO, Runner, Settings, build_command, data_dir, load_settings, save_settings, selected_modules, validate_module_parameters
-from install_manager import default_root, detect_ww_exe, download_official, module_executable, sra_desktop_executable, uninstall_managed_sra
+from install_manager import default_root, discover_sra_executable, detect_ww_exe, download_official, module_executable, sra_desktop_executable, uninstall_managed_sra
 from lifecycle import find_ww_registry_entries, inspect_ww, inspect_sra, plan_text_ww, plan_text_sra
 from cache_manager import cache_plan, clean_module_cache, offline_package
 from install_manager import extract_sra_safely
@@ -238,7 +238,7 @@ class UIv3:
         header = tk.Frame(shell,bg=BG)
         header.pack(fill='x')
         tk.Label(header,text='AutoFusion',font=(FONT,25,'bold'),bg=BG,fg=TEXT).pack(side='left')
-        tk.Label(header,text=f'PERSONAL   ·   V{APP_VERSION}   ·   WINDOWS',font=(FONT,10),bg=BG,fg=SUB).pack(side='right',pady=13)
+        tk.Label(header,text=f'COMMUNITY   ·   V{APP_VERSION}   ·   WINDOWS',font=(FONT,10),bg=BG,fg=SUB).pack(side='right',pady=13)
         tk.Label(shell,text='管理你的开源工具 · 尊重原版安装与使用方式',
                  font=(FONT,10),bg=BG,fg=SUB).pack(anchor='w',pady=(0,12))
         nav = tk.Frame(shell,bg=BG)
@@ -725,15 +725,16 @@ class UIv3:
             root=self._validated_root()
         except ValueError as exc:
             if not quiet:
-                self._log('warning',f'模块扫描未开始：{exc}')
-            return
+                self._log('warning',f'整合目录未配置，仍只读识别整机软件：{exc}')
+            root=data_dir()/'unconfigured-modules'
         self._scan_generation += 1
         generation=self._scan_generation
         typed_ww=self.ww_path.get().strip()
+        typed_sra=self.sra_path.get().strip()
         def worker():
             try:
-                sra=inspect_sra(root)
-                found=Path(typed_ww) if typed_ww else detect_ww_exe(root)
+                sra=inspect_sra(root,selected=typed_sra,discover_external=True)
+                found=Path(typed_ww) if typed_ww and Path(typed_ww).is_file() else detect_ww_exe(root)
                 ww=inspect_ww(found)
                 seven=detect_sevenzip()
                 self.events.put(('status_scan_result',(generation,root,sra,ww,quiet,seven)))
@@ -749,7 +750,7 @@ class UIv3:
             generation, root, sra, ww, quiet, seven=result
         if generation != self._scan_generation:
             return
-        sra_labels={'managed':'已部署','absent':'未安装','unmanaged':'未受管','unsafe':'存在异常'}
+        sra_labels={'managed':'已部署','absent':'未安装','unmanaged':'已发现（只读）','unsafe':'存在异常'}
         ww_labels={'installed':'已安装','absent':'未安装','stale':'需要修复','unregistered':'仅检测到程序'}
         if seven is not None:
             self._sevenzip_record = seven
@@ -758,14 +759,14 @@ class UIv3:
                                     'sevenzip':((seven.state, {'installed':'已安装','absent':'未安装','stale':'需要修复','unregistered':'发现程序（未登记）'}.get(seven.state,seven.state)) if seven else self._module_status('sevenzip'))}
         self.manage_sra_state.set({'managed':f'已识别受管理的便携版安装：{sra.removable} 个原版文件可安全清理',
             'absent':'未安装 / 未检测到受管理的模块',
-            'unmanaged':'目录存在，但缺少可信安装清单，不允许自动卸载',
+            'unmanaged':sra.message,
             'unsafe':'模块目录异常，拒绝自动卸载'}.get(sra.state,sra.state))
         self.manage_ww_state.set({'installed':'已识别程序及 Windows 官方安装登记',
             'stale':'仅有官方安装记录、程序缺失；建议原版修复或官方卸载',
             'unregistered':'发现程序，但未找到 Windows 官方卸载登记',
             'absent':'未检测到程序或官方安装登记'}.get(ww.state,ww.state))
-        if sra.state == 'managed':
-            exe=module_executable(root,'sra')
+        if sra.state in ('managed','unmanaged'):
+            exe=discover_sra_executable(root,self.sra_path.get().strip())
             if exe and not self.sra_path.get().strip():
                 self.sra_path.set(str(exe))
         if ww.executable and ww.executable.is_file() and not self.ww_path.get().strip():
@@ -850,7 +851,7 @@ class UIv3:
         tk.Label(parent,text=item['subtitle']+'  ·  '+item['type'],font=(FONT,9),bg=CARD,fg=SUB).pack(anchor='w',pady=(7,14))
         buttons=tk.Frame(parent,bg=CARD)
         buttons.pack(fill='x')
-        installed=state[0] in ('installed','managed','unregistered')
+        installed=state[0] in ('installed','managed','unregistered','unmanaged')
         Pill(buttons,'打开原版' if installed else '下载安装',
              (lambda m=key:self._open_original(m)) if installed else (lambda m=key:self._install_catalog(m)),
              width=133,primary=True).pack(side='left')
@@ -1321,7 +1322,11 @@ class App(UIv3, tk.Tk):
 
     def _vars(self):
         c = self.settings
-        self.install_root = tk.StringVar(value=c.install_root or str(default_root()))
+        try:
+            initial_root=c.install_root or str(default_root())
+        except ValueError:
+            initial_root=""
+        self.install_root = tk.StringVar(value=initial_root)
         self.ww_path = tk.StringVar(value=c.ww_exe)
         self.sra_path = tk.StringVar(value=c.sra_exe)
         self.ww_task = tk.StringVar(value=str(c.ww_task))
@@ -1383,7 +1388,7 @@ class App(UIv3, tk.Tk):
     def _validated_root(self) -> Path:
         value = self.install_root.get().strip().strip('"')
         if not value:
-            raise ValueError('请先设置整合目录')
+            raise ValueError('请在设置中选择可写的整合目录，例如 D:\\AutoFusion\\fusion')
         folder = Path(value).expanduser()
         if not folder.is_absolute():
             raise ValueError('整合目录必须是绝对路径')
@@ -1455,7 +1460,7 @@ class App(UIv3, tk.Tk):
         if ww:
             self.ww_path.set(str(ww))
             found.append('OK-WW：' + str(ww))
-        sra = module_executable(root, 'sra')
+        sra = discover_sra_executable(root, self.sra_path.get().strip())
         if sra:
             self.sra_path.set(str(sra))
             found.append('SRA：' + str(sra))
@@ -1638,15 +1643,15 @@ class App(UIv3, tk.Tk):
     def _manage_scan(self, quiet=False):
         try:
             root = self._validated_root()
-            sra = inspect_sra(root)
+            sra = inspect_sra(root, selected=self.sra_path.get().strip(),discover_external=True)
             labels = {
                 'managed': f'已识别受管理的便携版安装：{sra.removable} 个原版文件可安全清理',
                 'absent': '未安装 / 未检测到受管理的模块',
-                'unmanaged': '目录存在，但缺少可信安装清单，不允许自动卸载',
+                'unmanaged': sra.message,
                 'unsafe': '模块目录异常，拒绝自动卸载',
             }
             self.manage_sra_state.set(labels.get(sra.state, sra.state))
-            path = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() else detect_ww_exe(root)
+            path = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() and Path(self.ww_path.get().strip()).is_file() else detect_ww_exe(root)
             ww = inspect_ww(path)
             wwlabels = {'installed': '已识别程序及 Windows 官方安装登记',
                         'stale': '仅有官方安装记录、程序缺失；建议原版修复或官方卸载',
@@ -1667,7 +1672,7 @@ class App(UIv3, tk.Tk):
                     self._log('info', 'OK-WW 官方卸载已通过状态扫描，按设置保留安装包用于离线重装。')
             if not quiet:
                 self._log('info', f'模块状态扫描：SRA={sra.state}，OK-WW={ww.state}；未修改文件。')
-            sra_labels={'managed':'已部署','absent':'未安装','unmanaged':'未受管','unsafe':'存在异常'}
+            sra_labels={'managed':'已部署','absent':'未安装','unmanaged':'已发现（只读）','unsafe':'存在异常'}
             ww_labels={'installed':'已安装','absent':'未安装','stale':'需要修复','unregistered':'仅检测到程序'}
             seven = detect_sevenzip()
             self._cached_module_states={'sra':(sra.state,sra_labels.get(sra.state,sra.state)),
@@ -1725,7 +1730,7 @@ class App(UIv3, tk.Tk):
     def _preview_ww(self):
         try:
             root = self._validated_root()
-            path = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() else detect_ww_exe(root)
+            path = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() and Path(self.ww_path.get().strip()).is_file() else detect_ww_exe(root)
             state = inspect_ww(path)
             cache = cache_plan(root, 'ww')
             cache_info = (f'\n\n【安装缓存】识别到 {len(cache.files)} 个官方安装包，'
@@ -1828,7 +1833,7 @@ class App(UIv3, tk.Tk):
             return
         try:
             root = self._validated_root()
-            file = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() else detect_ww_exe(root)
+            file = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() and Path(self.ww_path.get().strip()).is_file() else detect_ww_exe(root)
             state = inspect_ww(file)
             possibilities = [record for record in state.records if record.uninstall_command]
             if not possibilities:
@@ -1884,7 +1889,7 @@ class App(UIv3, tk.Tk):
         try:
             root = self._validated_root()
             sra = inspect_sra(root)
-            wwpath = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() else detect_ww_exe(root)
+            wwpath = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() and Path(self.ww_path.get().strip()).is_file() else detect_ww_exe(root)
             ww = inspect_ww(wwpath)
             absent = (["sra"] if sra.state == 'absent' else []) + (["ww"] if ww.state == 'absent' else [])
             plans = [cache_plan(root, m) for m in absent]
@@ -1904,7 +1909,7 @@ class App(UIv3, tk.Tk):
                 if p.module == 'sra' and inspect_sra(root).state != 'absent':
                     continue
                 if p.module == 'ww':
-                    checkpath = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() else detect_ww_exe(root)
+                    checkpath = Path(self.ww_path.get().strip()) if self.ww_path.get().strip() and Path(self.ww_path.get().strip()).is_file() else detect_ww_exe(root)
                     if inspect_ww(checkpath).state != 'absent':
                         continue
                 n, bytes_removed = clean_module_cache(root, p.module)
@@ -1919,7 +1924,7 @@ class App(UIv3, tk.Tk):
             return
         try:
             root = self._validated_root()
-            if inspect_sra(root).state != 'absent':
+            if (root/'sra').exists() or (root/'sra').is_symlink():
                 messagebox.showinfo('已存在 SRA', 'SRA 目录已存在，不会覆盖。请先确认当前安装状态。')
                 return
             archive = offline_package(root, 'sra')
