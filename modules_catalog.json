@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "modules": [
+    {
+      "id": "ww",
+      "title": "鸣潮助手",
+      "subtitle": "OK-WW",
+      "type": "官方安装器 · GitHub",
+      "kind": "official",
+      "description": "保留 OK-WW 官方安装、启动与卸载向导",
+      "website": "https://github.com/ok-oldking/ok-wuthering-waves",
+      "adapter": "legacy_ww"
+    },
+    {
+      "id": "sra",
+      "title": "崩坏：星穹铁道助手",
+      "subtitle": "StarRailAssistant",
+      "type": "便携 ZIP · GitHub",
+      "kind": "portable",
+      "description": "由 AutoFusion 部署便携版，保留 SRA 官方界面",
+      "website": "https://github.com/Shasnow/StarRailAssistant",
+      "adapter": "legacy_sra"
+    },
+    {
+      "id": "sevenzip",
+      "title": "7-Zip 文件压缩工具",
+      "subtitle": "7-Zip · 官网推荐的 SourceForge 发布源",
+      "type": "官方安装器 · SourceForge",
+      "kind": "official",
+      "description": "测试非 GitHub 来源、Windows 已有安装检测与官方卸载入口；仅支持 Windows x64",
+      "website": "https://www.7-zip.org/download.html",
+      "adapter": "official_sevenzip_x64",
+      "version": "26.05",
+      "asset": "7z2605-x64.exe",
+      "download_url": "https://sourceforge.net/projects/sevenzip/files/7-Zip/26.05/7z2605-x64.exe/download",
+      "sha256": "fd99e86f57d8f429ef5ed045bf98315af962e2309b0f1ba87a147a44c71647d0"
+    }
+  ]
+}
