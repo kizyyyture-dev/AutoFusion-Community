@@ -8,7 +8,7 @@ class CommunityIsolation(unittest.TestCase):
     def test_profile_and_modules_are_independent(self):
         with patch.dict(os.environ, {"LOCALAPPDATA":str(Path.cwd()/"temporary-profile")}):
             self.assertEqual(core.data_dir().name,"AutoFusionCommunity")
-            self.assertEqual(default_root(),core.data_dir()/"Modules")
+            self.assertEqual(default_root(candidates=[core.data_dir()/"fusion"]),core.data_dir()/"fusion")
     def test_payment_resources_not_distributed(self):
         root=Path(__file__).resolve().parents[1]
         self.assertFalse((root/"donation_assets.py").exists())
