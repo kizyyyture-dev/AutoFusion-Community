@@ -1,0 +1,17 @@
+Microsoft Visual C++ 运行库与通用 C 运行库（UCRT）说明
+
+AutoFusion Personal 发行包内包含以下 Microsoft 运行库文件（位于 _internal\）：
+- VCRUNTIME140.dll
+- VCRUNTIME140_1.dll
+- ucrtbase.dll
+- api-ms-win-core-*.dll、api-ms-win-crt-*.dll（UCRT API 转发库）
+
+来源：随 Python 3.13.12 官方 Windows 构建产物一起分发，原始出处为 Microsoft Visual Studio / Windows SDK 的
+可再发行组件。AutoFusion 未修改这些文件，也未重新编译它们。
+
+许可：这些文件不是开源软件，按 Microsoft 的再发行条款随使用它们的程序一起分发；
+因此没有开源许可证原文可以随包提供。若你需要完整的 Microsoft 许可条款，请查阅：
+https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
+https://www.microsoft.com/zh-cn/legal/terms-of-use
+
+运行前提：用户无需单独安装 Visual C++ 可再发行包，因为上述 DLL 已随程序目录分发。

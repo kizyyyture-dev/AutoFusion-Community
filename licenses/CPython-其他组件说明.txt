@@ -1,0 +1,21 @@
+随 CPython 静态编入的其他组件说明
+
+AutoFusion Personal 发行包内的 python313.dll 是 CPython 3.13.12 官方 Windows 构建产物，
+其中静态编入了若干第三方组件，例如（不完全列举）：
+- expat（XML 解析）
+- bzip2（_bz2.pyd 依赖的库）
+- liblzma / xz（_lzma.pyd）
+- SQLite（注意：本次发行包 _internal 内没有 _sqlite3.pyd，sqlite3 未随包分发，故 SQLite 条目不适用于本包）
+- libmpdec（_decimal.pyd）
+- HACL*/OpenSSL 相关加密实现（_hashlib.pyd、_ssl.pyd）
+- Windows 上的 unicodedata 数据（unicodedata.pyd）
+
+这些组件的版权与许可声明由 CPython 项目统一发布在源码树的 Doc/license.rst 中，
+CPython 的 LICENSE.txt 也说明了"本发行版包含的部分组件适用各自许可"。
+AutoFusion 未修改、未重新链接这些组件，只是随 CPython 官方构建产物一起分发。
+
+如需逐条核对，请对照：
+- https://docs.python.org/3/license.html
+- CPython 3.13.12 源码树中的 Doc/license.rst 与 LICENSE
+
+若某个组件在本发行包中实际不存在（例如未使用 sqlite3），对应条目自然不适用。
