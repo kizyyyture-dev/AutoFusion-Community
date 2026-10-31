@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from app import App
 from cache_manager import cache_plan, clean_module_cache, offline_package
 from install_manager import extract_sra_safely
+from community_storage import claim_empty_root
 from core import Settings, load_settings, save_settings
 
 
@@ -16,7 +17,7 @@ class CacheManagerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / 'fusion'
-        self.root.mkdir()
+        claim_empty_root(self.root)
 
     def tearDown(self):
         self.temp.cleanup()
